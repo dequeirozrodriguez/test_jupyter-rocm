@@ -1,0 +1,117 @@
+# Part B (stadlone if wanted) — verify PyTorch ROCm after install
+
+Run this notebook after youve run the install notebook (Part A) and restarted the kernel / started a fresh run.
+
+It prints:
+- the kernel Python (`sys.executable`)
+- where `torch` is imported from
+- rocm/hiop version info
+- number of GPUs and their names
+- a tiny GPU matmul test
+
+
+
+```python
+import sys, platform
+print('=== KERNEL PYTHON ===')
+print('sys.executable:', sys.executable)
+print('sys.version:', sys.version)
+print('platform:', platform.platform())
+
+```
+
+    === KERNEL PYTHON ===
+    sys.executable: /home/dieguez/.pyenv/versions/3.11.14/bin/python3
+    sys.version: 3.11.14 (main, Nov 13 2025, 13:11:17) [GCC 14.2.1 20250110 (Red Hat 14.2.1-7)]
+    platform: Linux-6.12.0-55.41.1.el10_0.x86_64-x86_64-with-glibc2.39
+
+
+
+```python
+import torch
+print('\n=== TORCH BUILD ===')
+print('torch.__version__:', torch.__version__)
+print('torch file:', torch.__file__)
+print('torch.version.hip:', getattr(torch.version, 'hip', None))
+print('torch.version.cuda:', getattr(torch.version, 'cuda', None))
+print('torch.cuda.is_available():', torch.cuda.is_available())
+print('torch.cuda.device_count():', torch.cuda.device_count())
+if torch.cuda.is_available():
+    for i in range(torch.cuda.device_count()):
+        print(f'Device {i}:', torch.cuda.get_device_name(i))
+else:
+    print('No torch-visible GPU.')
+
+```
+
+
+    === TORCH BUILD ===
+    torch.__version__: 2.9.1+rocm6.4
+    torch file: /home/dieguez/.pyenv/versions/3.11.14/lib/python3.11/site-packages/torch/__init__.py
+    torch.version.hip: 6.4.43484-123eb5128
+    torch.version.cuda: None
+    torch.cuda.is_available(): True
+    torch.cuda.device_count(): 4
+    Device 0: AMD Instinct MI300X
+    Device 1: AMD Instinct MI300X
+    Device 2: AMD Instinct MI300X
+    Device 3: AMD Instinct MI300X
+
+
+
+```python
+import time, torch
+print('\n=== TINY GPU TEST (matmul on cuda:0) ===')
+assert torch.cuda.is_available(), 'No torch-visible GPU.'
+device = torch.device('cuda:0')
+a = torch.randn((2048, 2048), device=device, dtype=torch.float16)
+b = torch.randn((2048, 2048), device=device, dtype=torch.float16)
+for _ in range(5):
+    c = a @ b
+torch.cuda.synchronize(device)
+t0 = time.time()
+for _ in range(20):
+    c = a @ b
+torch.cuda.synchronize(device)
+t1 = time.time()
+print('OK | elapsed:', round(t1-t0, 6), 's | mean:', float(c.mean().item()))
+
+```
+
+
+    === TINY GPU TEST (matmul on cuda:0) ===
+
+
+    OK | elapsed: 0.002477 s | mean: 0.03485107421875
+
+
+## Optional: per-GPU matmul (stress each GPU,might be nice to see it altogehter)
+Uncomment and run if you want to verify compute on every GPU.
+
+
+
+```python
+# import time, torch
+# assert torch.cuda.is_available(), 'No torch-visible GPU.'
+#
+# def matmul_on_device(i: int, n: int = 2048, iters: int = 20, warmup: int = 5):
+#     device = torch.device(f'cuda:{i}')
+#     a = torch.randn((n, n), device=device, dtype=torch.float16)
+#     b = torch.randn((n, n), device=device, dtype=torch.float16)
+#     for _ in range(warmup):
+#         c = a @ b
+#     torch.cuda.synchronize(device)
+#     t0 = time.time()
+#     for _ in range(iters):
+#         c = a @ b
+#     torch.cuda.synchronize(device)
+#     t1 = time.time()
+#     return (t1 - t0), float(c.mean().item())
+#
+# count = torch.cuda.device_count()
+# print(f'Running per-GPU matmul test on {count} GPU(s)...')
+# for i in range(count):
+#     elapsed, meanv = matmul_on_device(i)
+#     print(f'GPU {i}: OK | elapsed={elapsed:.4f}s | mean={meanv:.6f}')
+
+```
