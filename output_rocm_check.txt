@@ -1,0 +1,216 @@
+# Torch / ROCm GPU sanity check!
+
+thhis notebook prints Pytorch plus ROCm info and runs a tiny GPU matmul if a GPU is visible.
+
+
+
+```python
+import os, sys, platform
+print('Python:', sys.version)
+print('Platform:', platform.platform())
+print('Executable:', sys.executable)
+
+```
+
+    Python: 3.11.9 (main, Dec 23 2025, 16:33:35) [GCC 14.2.1 20250110 (Red Hat 14.2.1-7)]
+    Platform: Linux-6.12.0-55.41.1.el10_0.x86_64-x86_64-with-glibc2.39
+    Executable: /home/dieguez/.pyenv/versions/3.11.9/bin/python3
+
+
+
+```python
+import torch
+print('torch.__version__:', torch.__version__)
+print('torch.version.hip:', getattr(torch.version, 'hip', None))
+print('torch.version.cuda:', getattr(torch.version, 'cuda', None))
+print('torch.cuda.is_available():', torch.cuda.is_available())
+print('torch.cuda.device_count():', torch.cuda.device_count())
+
+if torch.cuda.is_available():
+    for i in range(torch.cuda.device_count()):
+        print(f'Device {i}:', torch.cuda.get_device_name(i))
+        props = torch.cuda.get_device_properties(i)
+        # Some properties may not exist on all builds; keep it robust
+        print('  total_memory (GiB):', getattr(props, 'total_memory', 0)/1024**3)
+        print('  multi_processor_count:', getattr(props, 'multi_processor_count', None))
+        print('  gcnArchName:', getattr(props, 'gcnArchName', None))
+else:
+    print('\nNo GPU visible to torch')
+
+```
+
+    torch.__version__: 2.9.1+rocm6.4
+    torch.version.hip: 6.4.43484-123eb5128
+    torch.version.cuda: None
+    torch.cuda.is_available(): True
+    torch.cuda.device_count(): 4
+    Device 0: AMD Instinct MI300X
+      total_memory (GiB): 191.984375
+      multi_processor_count: 304
+      gcnArchName: gfx942:sramecc+:xnack-
+    Device 1: AMD Instinct MI300X
+      total_memory (GiB): 191.984375
+      multi_processor_count: 304
+      gcnArchName: gfx942:sramecc+:xnack-
+    Device 2: AMD Instinct MI300X
+      total_memory (GiB): 191.984375
+      multi_processor_count: 304
+      gcnArchName: gfx942:sramecc+:xnack-
+    Device 3: AMD Instinct MI300X
+      total_memory (GiB): 191.984375
+      multi_processor_count: 304
+      gcnArchName: gfx942:sramecc+:xnack-
+
+
+
+```python
+import time
+import torch
+
+def run_matmul(device):
+    # some smallish matmul to confirm compute :)
+    a = torch.randn((2048, 2048), device=device, dtype=torch.float16)
+    b = torch.randn((2048, 2048), device=device, dtype=torch.float16)
+    # warmup
+    for _ in range(5):
+        c = a @ b
+    torch.cuda.synchronize() if device.type == 'cuda' else None
+    t0 = time.time()
+    for _ in range(20):
+        c = a @ b
+    if device.type == 'cuda':
+        torch.cuda.synchronize()
+    t1 = time.time()
+    print(f'Matmul OK on {device} | elapsed: {t1 - t0:.3f}s | c.mean(): {c.mean().item():.6f}')
+
+if torch.cuda.is_available():
+    run_matmul(torch.device('cuda:0'))
+else:
+    print('Skipping matmul: no torch-visible GPU.')
+
+```
+
+    Matmul OK on cuda:0 | elapsed: 0.001s | c.mean(): 0.004463
+
+
+
+```python
+import subprocess, shlex
+
+def try_cmd(cmd):
+    print('\n$ ' + cmd)
+    try:
+        out = subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT, text=True)
+        print(out[:4000])
+        if len(out) > 4000:
+            print('... (truncated)')
+    except FileNotFoundError:
+        print('Command not found.')
+    except subprocess.CalledProcessError as e:
+        print('Command failed with code', e.returncode)
+        print((e.output or '')[:4000])
+
+try_cmd('rocminfo')
+try_cmd('rocm-smi')
+
+```
+
+
+    $ rocminfo
+    ROCk module version 6.16.6 is loaded
+    =====================
+    HSA System Attributes
+    =====================
+    Runtime Version:         1.18
+    Runtime Ext Version:     1.14
+    System Timestamp Freq.:  1000.000000MHz
+    Sig. Max Wait Duration:  18446744073709551615 (0xFFFFFFFFFFFFFFFF) (timestamp count)
+    Machine Model:           LARGE
+    System Endianness:       LITTLE
+    Mwaitx:                  DISABLED
+    XNACK enabled:           NO
+    DMAbuf Support:          YES
+    VMM Support:             YES
+
+    ==========
+    HSA Agents
+    ==========
+    *******
+    Agent 1
+    *******
+      Name:                    AMD EPYC 9474F 48-Core Processor
+      Uuid:                    CPU-XX
+      Marketing Name:          AMD EPYC 9474F 48-Core Processor
+      Vendor Name:             CPU
+      Feature:                 None specified
+      Profile:                 FULL_PROFILE
+      Float Round Mode:        NEAR
+      Max Queue Number:        0(0x0)
+      Queue Min Size:          0(0x0)
+      Queue Max Size:          0(0x0)
+      Queue Type:              MULTI
+      Node:                    0
+      Device Type:             CPU
+      Cache Info:
+        L1:                      32768(0x8000) KB
+      Chip ID:                 0(0x0)
+      ASIC Revision:           0(0x0)
+      Cacheline Size:          64(0x40)
+      Max Clock Freq. (MHz):   0
+      BDFID:                   0
+      Internal Node ID:        0
+      Compute Unit:            48
+      SIMDs per CU:            0
+      Shader Engines:          0
+      Shader Arrs. per Eng.:   0
+      WatchPts on Addr. Ranges:1
+      Memory Properties:
+      Features:                None
+      Pool Info:
+        Pool 1
+          Segment:                 GLOBAL; FLAGS: FINE GRAINED
+          Size:                    960244880(0x393c2c90) KB
+          Allocatable:             TRUE
+          Alloc Granule:           4KB
+          Alloc Recommended Granule:4KB
+          Alloc Alignment:         4KB
+          Accessible by all:       TRUE
+        Pool 2
+          Segment:                 GLOBAL; FLAGS: EXTENDED FINE GRAINED
+          Size:                    960244880(0x393c2c90) KB
+          Allocatable:             TRUE
+          Alloc Granule:           4KB
+          Alloc Recommended Granule:4KB
+          Alloc Alignment:         4KB
+          Accessible by all:       TRUE
+        Pool 3
+          Segment:                 GLOBAL; FLAGS: KERNARG, FINE GRAINED
+          Size:                    960244880(0x393c2c90) KB
+          Allocatable:             TRUE
+          Alloc Granule:           4KB
+          Alloc Recommended Granule:4KB
+          Alloc Alignment:         4KB
+          Accessible by all:       TRUE
+        Pool 4
+          Segment:                 GLOBAL; FLAGS: COARSE GRAINED
+
+    ... (truncated)
+
+    $ rocm-smi
+
+
+    WARNING: AMD GPU device(s) is/are in a low-power state. Check power control/runtime_status
+
+
+
+    ============================================= ROCm System Management Interface =============================================
+    ======================================================= Concise Info =======================================================
+    Device  Node  IDs              Temp        Power     Partitions          SCLK     MCLK     Fan  Perf  PwrCap  VRAM%  GPU%
+                  (DID,     GUID)  (Junction)  (Socket)  (Mem, Compute, ID)                                             
+    ============================================================================================================================
+    0       1     0x74a1,   9030   36.0°C      191.0W    NPS1, SPX, 0        1884Mhz  1300Mhz  0%   auto  750.0W  0%     1%
+    1       2     0x74a1,   17218  41.0°C      156.0W    NPS1, SPX, 0        161Mhz   1100Mhz  0%   auto  750.0W  0%     1%
+    2       3     0x74a1,   58190  36.0°C      153.0W    NPS1, SPX, 0        158Mhz   1100Mhz  0%   auto  750.0W  0%     1%
+    3       4     0x74a1,   33610  38.0°C      147.0W    NPS1, SPX, 0        156Mhz   1100Mhz  0%   auto  750.0W  0%     1%
+    ============================================================================================================================
+    =================================================== End of ROCm SMI Log ====================================================
